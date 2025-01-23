@@ -1,0 +1,65 @@
+installing boost:
+0. boost files are in ./boostFiles if you dotn want to edit/make them or you can just modify them
+  place user-config.jam in $HOME
+  place project-config.jam in the boost directory -- $HOME/boost_1_87_0/
+
+1. in $HOME make a file called user-config.jam with the following in it:
+
+# ---------------------
+# Python configuration.
+# ---------------------
+
+# Configure specific Python version.
+using python : 3.12 : /usr/bin/python3.12 : /usr/include/python3.12 : /usr/lib ;
+# ---------------------
+
+
+
+Then do in the boost directory - e.g. boost_1_87_0 - this installs boost in location /usr/local
+2. ./bootstrap.sh --prefix=/usr/local --with-libraries=python
+3. sudo ./b2
+4. sudo ./b2 install
+
+
+Now boost should be installed.
+To compile a simple helloWorld program
+g++ -Wall -Wextra -fPIC -shared -I/usr/include/python3.12/ helloWorld.cpp -o helloWorld.so -lboost_python312 -lboost_numpy312
+
+The last two commands in the compiling line are the so files. These are found in /usr/local/lib/ or <install_directory_from_above>/lib
+
+....
+Simple helloWorld.cpp file:
+....
+#include <iostream>
+#include <vector>
+#include <string>
+#include <boost/python.hpp>
+
+namespace py = boost::python;
+
+int helloWorldFunction(int a, int b) {
+  std::cout << "this is my hello world code :)" << std::endl;
+  return a + b;
+}
+
+BOOST_PYTHON_MODULE(helloWorld) {  // parenthesis match filename --> helloWorld is the module name / filename
+    Py_Initialize();        // initialize
+    py::def("hello_world", helloWorldFunction); // make function available in python - module name is helloWorld and we can call function helloWorld.hello_world to run helloWorldFunction
+
+}
+
+
+....
+And the python file to go with it: whatever.py
+....
+import helloWorld
+
+summed = helloWorld.hello_world(1, 2)
+print(summed)
+
+5. you need to also make sure numpy versions are ok - when using np libraries you might be getting errors due to v2 used in conda and v1 used in boost install.
+   in your conda environment:
+conda install numpy<2.0
+
+6. if you get clibgxx errors then you might need to update in your conda env:
+conda install -c conda-forge libstdcxx-n

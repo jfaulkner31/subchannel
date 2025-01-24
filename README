@@ -1,0 +1,4 @@
+# read everything in boost_install first
+# other required packages
+pip install gmsh
+pip install shapely

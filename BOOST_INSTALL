@@ -60,6 +60,7 @@ print(summed)
 5. you need to also make sure numpy versions are ok - when using np libraries you might be getting errors due to v2 used in conda and v1 used in boost install.
    in your conda environment:
 conda install numpy<2.0
+conda install numpy=1.26.4
 
 6. if you get clibgxx errors then you might need to update in your conda env:
 conda install -c conda-forge libstdcxx-n

@@ -167,16 +167,83 @@ class volume(surface):
   def __init__(self, dim, etag, name, ptag, id):
     super().__init__(dim, etag, name, ptag, id)
     self.elements = []
+    self.faces = []
   def append_element(self, eid: int):
     self.elements.append(eid)
+  def append_face(self, fid):
+    self.faces.append(fid)
 
 class mesh():
-  def __init__(self, mesh_id: int, elements: list, boundaries: list, volumes: list, faces: list):
+  def __init__(self, mesh_id: int, elements: list, boundaries: list, volumes: list, faces: list, orthogonalityApproach: str):
     self.boundaries = boundaries
     self.mesh_id = mesh_id
     self.elements = elements
     self.volumes = volumes
     self.faces = faces
+
+    # orthogonal, nonorthogonal, and surface vector components for every mesh element
+    # dict[element_id / eid][list of vectors]
+    self.Ef = {}
+    self.Tf = {}
+    self.gDiffs = {} # geoemtric diffusion coeffs -- diff defs for faces and boundaries.
+    self.calculateNonorthogonalComponents(orthogonalityApproach=orthogonalityApproach)
+
+  def calculateNonorthogonalComponents(self):
+    # Decomposes Sf into Sf = Ef + Tf
+    # This method is how Ef and Tf are computed.
+
+    for eid in self.eids:
+      this_Ef = []
+      this_Tf = []
+      this_gDiff = [] # geometric diffusion coeffs
+
+      e = self.elements[eid] # element with eid
+      evecs = e.evec # list of normal vectors for each surface
+
+      # now for every surface calculate Ef Tf and Sf
+      for idx, faceid in enumerate(e.face_ids):
+        if e.is_owner[idx]: #
+          multiplier = 1 # S poiints away from cell for owner cells
+        else:
+          multiplier = -1
+        Sf = self.faces[faceid].surface_vector * multiplier
+        area = self.faces[faceid].area
+        evec = evecs[idx]
+
+        if evec is not None: # this should pass no matter what - exception raised below just in case
+          if self.orthogonalityApproach == 'MCA':
+            _ef = np.dot(evec, Sf) * evec
+            this_Ef.append(_ef)
+            this_Tf.append(Sf - _ef)
+          elif self.orthogonalityApproach == 'OCA':
+            _ef = area * evec
+            this_Ef.append(_ef)
+            this_Tf.append(Sf - _ef)
+          elif self.orthogonalityApproach == 'ORA':
+            top =  np.dot(Sf, Sf)
+            bottom = np.dot(evec, Sf)
+            _ef = top/bottom * evec
+            this_Ef.append(_ef)
+            this_Tf.append(Sf - _ef)
+          else:
+            raise Exception("Unknown orthogonality approach")
+
+          # set geometric diffusion coeff while we are here
+          if e.is_face[idx]: # for faces
+            this_gDiff.append( np.linalg.norm(_ef) / e.d_CNb[idx])
+          elif e.is_boundary[idx]: # for boundaries
+            this_gDiff.append(  np.linalg.norm(_ef) / e.d_Cf[idx] )
+          else:
+            raise Exception("Neither a face or boundary, huh????")
+
+        else: # if it is a boundary face
+          raise Exception("evec should be assigned for all faces and boundaries.")
+
+      # now that we iterated over all faces, add to dictionaries
+      self.Ef[eid] = this_Ef
+      self.Tf[eid] = this_Tf
+      self.gDiffs[eid] = this_gDiff
+
 
 
 
@@ -201,6 +268,7 @@ def calculate_triangle_area(coords: np.ndarray):
   # area = 1.0/2.0 * magnitude
   area = np.linalg.norm(surface_vector)
   return area, surface_vector
+
 
 def get_element_volume_info(e, faces):
   # calculate volumes, geo center and centroid of each finite volume element.
@@ -650,6 +718,17 @@ def mesh_from_gmsh(filename):
     volume_key = e.entity_tag_dim
     volume_id = volume_dict[volume_key]
     volumes[volume_id].append_element(eid=e.eid)
+
+  ################################
+  # Assign faces to volumes
+  ################################
+  temp_face_list = []
+  for e in elements:
+    volume_key = e.entity_tag_dim
+    for fid in e.face_ids:
+      if fid not in temp_face_list:
+        temp_face_list.append(fid)
+        volumes[volume_id].append_face(fid=fid)
 
 
 

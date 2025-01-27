@@ -1,6 +1,10 @@
 import numpy as np
 from Fields.Fields import ScalarField
 from gmesh_conv.meshing import mesh
+from Fields.Fields import Field
+from Fields.Fields import ZeroScalarField
+from Fields.Fields import VectorField
+import matplotlib.pyplot as plt
 
 class Kernel:
   """
@@ -40,30 +44,55 @@ class Kernel:
         self.eid_to_n[eid] = idx
         idx += 1
 
+  def plot_coeffs(self, coeff_range: int):
+    """
+    Plots the matrix as a grid where each cell's intensity represents the magnitude of the value in the matrix.
+    """
+    # Create the plot
+    plt.figure(figsize=(8, 8))
 
+    # Use imshow to plot the matrix
+    # `cmap` determines the color map and `interpolation` smooths the grid (or keeps it pixelated)
+    plt.imshow(np.abs(self.coeffs[0:coeff_range, 0:coeff_range]), cmap='viridis', interpolation='nearest')
+
+    # Add color bar to show the mapping of values to colors
+    plt.colorbar(label='Magnitude')
+
+    # Add gridlines
+    plt.grid(visible=True, which='both', color='black', linestyle='-', linewidth=0.5)
+
+    # Add labels to the axes
+    plt.xlabel('Column Index')
+    plt.ylabel('Row Index')
+
+    # Show the plot
+    plt.show()
 
 class DiffusionKernel(Kernel):
-  def __init__(self, T: ScalarField, volumeList: list, Gamma: float, orthogonalityApproach: str, m: mesh):
+  def __init__(self, field: ScalarField, volumeList: list, Gamma: float, orthogonalityApproach: str, m: mesh):
     super().__init__(volumeList=volumeList, m=m)
     self.Gamma = self.set_gamma(Gamma)
     self.orthogonalityApproach = orthogonalityApproach
+    self.field = field
 
     # geometric diffusion coefficients for neighbors and boundaries.
-    self.gDiffs = {} # dict[element_id][list of floats]
+    self.gDiffs = self.globalmesh.gDiffs
 
     # orthogonal, nonorthogonal, and surface vector components - dict[element_id / eid][list of vectors]
-    self.Ef = {}
-    self.Tf = {}
-    self.calculateNonorthogonalComponents() # updates (non)orthogonal components of the surfaces for every element
+    self.Ef = self.globalmesh.Ef
+    self.Tf = self.globalmesh.Tf
+
+    # setup coeffs for ths kernel
     self.setup_coeffs()
 
   def get_diags(self):
     # get aC coeffs
     for idx, eid in enumerate(self.eids):
-      for this_gDiff in self.gDiffs[eid] :
-        # automatically adds the boundary terms as well as internal face terms since these terms are contained in gDiff
-        mat_idx = self.eid_to_n[eid]
-        self.coeffs[mat_idx, mat_idx] += self.Gamma * this_gDiff
+      for fidx, this_gDiff in enumerate(self.gDiffs[eid]):
+        # do only face terms
+        if self.globalmesh.elements[eid].is_face[fidx]:
+          mat_idx = self.eid_to_n[eid]
+          self.coeffs[mat_idx, mat_idx] += self.Gamma * this_gDiff
 
   def get_off_diags(self):
     # get off diagonal coeffs
@@ -87,13 +116,25 @@ class DiffusionKernel(Kernel):
 
   def get_b(self):
     for _, eid in enumerate(self.eids):
-      for fidx , _ in enumerate(self.globalmesh.elements[eid].face_ids):
+      this_b = 0.0
+      for fidx , face_id in enumerate(self.globalmesh.elements[eid].face_ids):
+
         # Do only faces with neighbor cells
         if self.globalmesh.elements[eid].is_face[fidx]:
-          mat_idx = self.eid_to_n[eid] # get matrix idx for this element
           # get idx for neighbbor
           neighbor_id = self.globalmesh.elements[eid].neighbor_ids[fidx]
-          neigh_idx = self.eid_to_n[neighbor_id]
+
+          # get gradient at faces from current fields gradient solution
+          face_grad = self.field.grad.get_face_gradient(eid=eid, fid=face_id)
+
+          # orthogonal vector Tf
+          Tf = self.Tf[eid][fidx]
+
+          # now add term to b:
+          this_b += np.dot(Tf, face_grad)
+
+      this_n = self.eid_to_n[eid]
+      self.b[this_n] += this_b
 
   def setup_coeffs(self):
     return super().setup_coeffs()
@@ -101,67 +142,6 @@ class DiffusionKernel(Kernel):
   def set_gamma(self, Gamma: float):
     # changes gamma coefficient used in the kernel if needed
     return Gamma
-
-  def calculateNonorthogonalComponents(self):
-    # Decomposes Sf into Sf = Ef + Tf
-    # This method is how Ef and Tf are computed.
-
-    for eid in self.eids:
-      this_Ef = []
-      this_Tf = []
-      this_gDiff = [] # geometric diffusion coeffs
-
-      e = self.globalmesh.elements[eid] # element with eid
-      evecs = e.evec # list of normal vectors for each surface
-
-      # now for every surface calculate Ef Tf and Sf
-      for idx, faceid in enumerate(e.face_ids):
-        if e.is_owner[idx]: #
-          multiplier = 1 # S poiints away from cell for owner cells
-        else:
-          multiplier = -1
-        Sf = self.globalmesh.faces[faceid].surface_vector * multiplier
-        area = self.globalmesh.faces[faceid].area
-        evec = evecs[idx]
-
-        if evec is not None:
-          # if internal face and NOT a boundary
-
-          if self.orthogonalityApproach == 'MCA':
-            _ef = np.dot(evec, Sf) * evec
-            this_Ef.append(_ef)
-            this_Tf.append(Sf - _ef)
-          elif self.orthogonalityApproach == 'OCA':
-            _ef = area * evec
-            this_Ef.append(_ef)
-            this_Tf.append(Sf - _ef)
-          elif self.orthogonalityApproach == 'ORA':
-            top =  np.dot(Sf, Sf)
-            bottom = np.dot(evec, Sf)
-            _ef = top/bottom * evec
-            this_Ef.append(_ef)
-            this_Tf.append(Sf - _ef)
-          else:
-            raise Exception("Unknown orthogonality approach")
-
-          # set geometric diffusion coeff while we are here
-
-          if e.is_face[idx]: # for faces
-            this_gDiff.append( np.abs(_ef) / e.d_CNb[idx])
-          elif e.is_boundary[idx]: # for boundaries
-            this_gDiff.append(  np.abs(_ef) / e.d_Cf[idx] )
-          else:
-            raise Exception("Neither a face or boundary, huh????")
-
-
-        else: # if it is a boundary face
-          raise Exception("evec should be assigned for all faces and boundaries.")
-
-      # now that we iterated over all faces, add to dictionaries
-      self.Ef[eid] = this_Ef
-      self.Tf[eid] = this_Tf
-      self.gDiffs[eid] = this_gDiff
-
 
 
 

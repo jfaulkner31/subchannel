@@ -209,9 +209,9 @@ class mesh():
       # now for every surface calculate Ef Tf and Sf
       for idx, faceid in enumerate(e.face_ids):
         if e.is_owner[idx]: #
-          multiplier = 1 # S poiints away from cell for owner cells
+          multiplier = 1.0 # S poiints away from cell for owner cells
         else:
-          multiplier = -1
+          multiplier = -1.0
         Sf = self.faces[faceid].surface_vector * multiplier
         area = self.faces[faceid].area
         evec = evecs[idx]

@@ -117,5 +117,8 @@ class DirichletBC(BoundaryCondition):
 
   def get_gradient_contribution(self, face_id: int, eid: int):
     # gets gradient contribution for this BC - e.g. phi_f * Surface_vector
+
+    # get whether it is owner or not
+
     return self.value * self.globalmesh.faces[face_id].surface_vector
 

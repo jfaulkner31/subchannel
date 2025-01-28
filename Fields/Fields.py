@@ -1,6 +1,6 @@
 import numpy as np
 from gmesh_conv.meshing  import mesh
-
+from copy import deepcopy
 
 class Field:
   def __init__(self, volumeList: list, m: mesh, name: str):
@@ -222,10 +222,16 @@ class FVGradient:
           # Step 1. Calculate phi_f'
           neighbor_id = self.global_mesh.elements[eid].neighbor_ids[fidx]
           phi_fp = ( self.field.T[eid] + self.field.T[neighbor_id] ) / 2.0
+
+          # get whether it is owner or not
+          multiplier = 1.0
+          if not self.global_mesh.elements[eid].is_owner[fidx]:
+            multiplier = -1.0
+
           sv = self.global_mesh.faces[face_id].surface_vector
 
           # Step 2. Add to grad_c
-          grad_c += sv * phi_fp
+          grad_c += sv * phi_fp * multiplier
         else: # if it is a boundary face
           # get bc idx in self.bc_list
           bc_idx = self.face_to_bc_idx[face_id]
@@ -240,7 +246,9 @@ class FVGradient:
 
     keep_going = True
     total_its = 0
-    while keep_going & (total_its < 2):
+
+    while keep_going & (total_its < 4):
+      grad_previ_it = deepcopy(self.gradient)
       total_its += 1
       keep_going = False
       # Gradient calc part 3 and 4
@@ -254,17 +262,22 @@ class FVGradient:
             phi_fp = ( self.field.T[eid] + self.field.T[neighbor_id] ) / 2.0
 
             # update phi_f
-            first = (self.gradient.T[eid] + self.gradient.T[neighbor_id])
+            first = (grad_previ_it.T[eid] + grad_previ_it.T[neighbor_id])
             second = self.global_mesh.faces[face_id].centroid  - 0.5 * (
               self.global_mesh.elements[eid].centroid + self.global_mesh.elements[neighbor_id].centroid )
             phi_f = phi_fp + 0.5 * np.dot(first, second)
+
+            # get whether it is owner or not
+            multiplier = 1.0
+            if not self.global_mesh.elements[eid].is_owner[fidx]:
+              multiplier = -1.0
 
             # assign phi_f to facefield from owner field
             self.field.faceField.assign_value(fid=face_id, val=phi_f)
 
             # now add to grad_c as step 4
             sv = self.global_mesh.faces[face_id].surface_vector
-            grad_c += sv * phi_f
+            grad_c += sv * phi_f * multiplier
           else:
             # get bc idx in self.bc_list
             bc_idx = self.face_to_bc_idx[face_id]

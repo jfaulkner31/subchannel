@@ -160,8 +160,12 @@ class surface():
     self.physicalName = name
     self.elements = []
     self.nodeTags, self.coords = gmsh.model.mesh.getNodesForPhysicalGroup(self.dim, self.ptag)
+    self.face_ids = [] # face ids that belong to this surface
   def assign_element(self, element):
     self.elements += [element]
+  def assign_face_ids(self, face_id: int):
+    self.face_ids += [face_id]
+
 
 class volume(surface):
   def __init__(self, dim, etag, name, ptag, id):
@@ -175,6 +179,7 @@ class volume(surface):
 
 class mesh():
   def __init__(self, mesh_id: int, elements: list, boundaries: list, volumes: list, faces: list, orthogonalityApproach: str):
+    self.orthogonalityApproach = orthogonalityApproach
     self.boundaries = boundaries
     self.mesh_id = mesh_id
     self.elements = elements
@@ -185,14 +190,15 @@ class mesh():
     # dict[element_id / eid][list of vectors]
     self.Ef = {}
     self.Tf = {}
-    self.gDiffs = {} # geoemtric diffusion coeffs -- diff defs for faces and boundaries.
-    self.calculateNonorthogonalComponents(orthogonalityApproach=orthogonalityApproach)
+    self.gDiffs = {} # dict[eid][surface_idx] geoemtric diffusion coeffs -- diff defs for faces and boundaries.
+    self.calculateNonorthogonalComponents()
 
   def calculateNonorthogonalComponents(self):
     # Decomposes Sf into Sf = Ef + Tf
     # This method is how Ef and Tf are computed.
 
-    for eid in self.eids:
+    for this_element in self.elements:
+      eid = this_element.eid
       this_Ef = []
       this_Tf = []
       this_gDiff = [] # geometric diffusion coeffs
@@ -244,6 +250,103 @@ class mesh():
       self.Tf[eid] = this_Tf
       self.gDiffs[eid] = this_gDiff
 
+
+  def export_to_vtk(self, filename, fieldlist=[]):
+    # Takes a mesh of points and exports to VTK format
+    node_dict = {}
+    i = int(0)
+    total_celllist_len = int(0)
+
+    for e in self.elements:
+      total_celllist_len += 1 # add 1 here - not a mistake
+      for node_coord in e.node_coords:
+        total_celllist_len += 1 # add here as well - not a mistake
+        if tuple(node_coord) not in node_dict:
+          node_dict[tuple(node_coord)] = i
+          i += 1
+
+    with open(filename, "w") as vtk_file:
+      """
+      Writes the given list of Point objects to a .vtk file for visualization in ParaView.
+
+      Args:
+          points (list): List of Point objects.
+          filename (str): Name of the output .vtk file.
+      """
+      # Write header
+      vtk_file.write("# vtk DataFile Version 2.0\n")
+      vtk_file.write("VTK file generated from Point objects\n")
+      vtk_file.write("ASCII\n")
+      vtk_file.write("DATASET UNSTRUCTURED_GRID\n")
+
+      # write poitns now where points are the vertexes of each cell
+      vtk_file.write(f"POINTS {len(node_dict)} float\n")
+      for node_key in node_dict.keys():
+        vertex = list(node_key)[0] #
+        vtk_file.write(f"{list(node_key)[0]} {list(node_key)[1]} {list(node_key)[2]} \n")
+
+      # cells now - CELLS n size - n=number cells - size = numbercells*numNodes + numCells
+      vtk_file.write(f"CELLS {len(self.elements)} {total_celllist_len}\n")
+      for i, cell in enumerate(self.elements):
+        line = str(len(cell.node_coords))
+        for coord in cell.node_coords:
+          line += " " + str(node_dict[tuple(coord)])
+
+        vtk_file.write(line+"\n")
+
+      # cell_types now --- CELL_TYPES n where n = number of cells
+      vtk_file.write(f"CELL_TYPES {len(self.elements)}\n")
+      for cell in self.elements:
+        if cell.ele_type == 4: # 4 node tetrahedron -> vtk type 10
+          vtk_file.write(f"10\n")
+        elif cell.ele_type == 7: # gmesh 5 node pyramid -> vtk type 14
+          vtk_file.write(f"14\n")
+
+      # cell data and field data now
+      # ----------------------------
+      # CELL_DATA numCells
+      # FIELD FieldData numFields
+      # fieldname1 1 numCells dataType (double or float)
+      # values.....
+      # values.....
+      #
+      # fieldname2 1 numCells dataType (double or float)
+      # values.....
+      # values.....
+      #
+
+
+      vtk_file.write(f"CELL_DATA {len(self.elements)}\n")
+      vtk_file.write(f"FIELD FieldData "+str(1+len(fieldlist))+" \n")
+      vtk_file.write(f"eid 1 {len(self.elements)} double\n")
+      line = ""
+      counter = 0
+      for i, cell in enumerate(self.elements):
+        line = line + str(cell.eid) + " "
+        if counter == 10:
+          vtk_file.write(f"{line} \n")
+          line = ""
+          counter = 0
+        counter += 1
+      vtk_file.write(f"{line} \n")
+
+      for field_idx, field in enumerate(fieldlist):
+        if field.name is None:
+          raise Exception("Field "+str(field_idx)+" has no fieldName attribute")
+        line = ""
+        counter = 0
+        vtk_file.write(f"{field.name} 1 {len(self.elements)} double\n")
+        for i, cell in enumerate(self.elements):
+          if cell.eid in field.eids:
+            line = line + str(fieldlist[field_idx].T[i]) + " "
+          else:
+            line + str(0.0) + " "
+          if counter == 10:
+            vtk_file.write(f"{line} \n")
+            line = ""
+            counter = 0
+          counter += 1
+        vtk_file.write(f"{line} \n")
 
 
 
@@ -321,9 +424,9 @@ def get_element_volume_info(e, faces):
 
   volume_centroid = np.array([polyhedron_centroidX, polyhedron_centroidY, polyhedron_centroidZ])
 
-  return tot_vol, volume_centroid
+  return tot_vol, volume_centroid, avgXYZ
 
-def mesh_from_gmsh(filename):
+def mesh_from_gmsh(filename: str, orthogonalityApproach: str):
   # Initialize gmsh
   gmsh.initialize()
   gmsh.open(filename)
@@ -386,6 +489,7 @@ def mesh_from_gmsh(filename):
   # see pdf page 367 - https://gmsh.info/dev/doc/texinfo/gmsh.pdf
   # element type 15 = a point (dont care)
   # element type 1 = 2 node line (useful for boundaries?)
+  # element type 2 = 3 node triangle (useless)
   # element type 3 = 4 node quadrangle (2d aka garbage)
   # element type 4 = 4 node tetrahedon (3d keep)
   # element type 7 = 5 node pyramid (3d keep)
@@ -395,7 +499,7 @@ def mesh_from_gmsh(filename):
     nt = nodeTags[idx] # node tags
     et = elementTags[idx] # element tags
 
-    if t in [15,1,3]:
+    if t in [15,1,3,2]:
       _ = 1 # do nothing since these are garbage
 
     elif t == 4: # 4 node tetrahedons
@@ -446,7 +550,7 @@ def mesh_from_gmsh(filename):
 
     else:
       print("element type  =", t)
-      raise Exception("invalid element type")
+      raise Exception("invalid element type = "+str(t))
 
 
   # Determining if each of the elements has a face on the boundary using elements and my boundary surfaces
@@ -597,7 +701,7 @@ def mesh_from_gmsh(filename):
   ################################
 
   for e in elements:
-    tot_vol, volume_centroid = get_element_volume_info(e, faces)
+    tot_vol, volume_centroid, avgXYZ = get_element_volume_info(e, faces)
     # assign stuff
     e.set_geo_center(avgXYZ)
     e.set_volume(tot_vol)
@@ -609,7 +713,7 @@ def mesh_from_gmsh(filename):
     volumeTOT += e.volume
   print('============================')
   print('Total volume is:', volumeTOT)
-  print('============================')
+
 
   ################################
   # GEOMETRIC WEIGHTING FACTORS
@@ -680,14 +784,18 @@ def mesh_from_gmsh(filename):
   # face surface vectors should point AWAY from the owner cell and TOWARDS the neighbor cell
   for f in faces:
     this_surface_vector = f.surface_vector
+
     if any(this_surface_vector == None):
       raise Exception("surface vector for face_id="+str(f.face_id)+" was never assigned")
+
+    if f.face_id == 9214:
+      aasdasdasdsad = 1
     this_centroid = f.centroid
     owner_centroid = elements[f.own_id].centroid
 
     d = this_centroid - owner_centroid
 
-    dotProd = np.dot(d, sv)
+    dotProd = np.dot(d, this_surface_vector)
 
     if dotProd < 0: # oriented wrong way so we flip it
       f.surface_vector = f.surface_vector * -1.0
@@ -706,10 +814,25 @@ def mesh_from_gmsh(filename):
       else:
         raise Exception("Not sure if this element is the owner or the neighbor of this face.")
 
+  ################################
+  # For each surface make a list of the faces that it has.
+  ################################
+  for ele in elements:
+    for fidx, fid in enumerate(ele.face_ids):
+      if ele.is_boundary[fidx]:
+        bndry_id = faces[fid].bnd_id
+        surfaces[bndry_id].assign_face_ids(face_id = fid)
 
-
-
-
+  # now get total surface area of the mesh
+  tot_surf_area = 0.0
+  for s in surfaces:
+    this_b_sv = np.array([0.0,0.0,0.0])
+    for face_id in s.face_ids:
+      tot_surf_area += faces[face_id].area
+      this_b_sv += faces[face_id].surface_vector
+    print("Surface vector for surface", s.name, "is", this_b_sv)
+  print('Total bndry surface area is:', tot_surf_area)
+  print('============================')
 
   ################################
   # Assign elements to volumes
@@ -735,7 +858,8 @@ def mesh_from_gmsh(filename):
   ################################
   # MAKING MESH OBJECT
   ################################
-  m = mesh(mesh_id=0, boundaries=surfaces, volumes=volumes, elements=elements, faces=faces)
+  m = mesh(mesh_id=0, boundaries=surfaces, volumes=volumes,
+           elements=elements, faces=faces, orthogonalityApproach=orthogonalityApproach)
 
   ################################
   # Print mesh information

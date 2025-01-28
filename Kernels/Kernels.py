@@ -1,8 +1,8 @@
 import numpy as np
-from Fields.Fields import ScalarField
 from gmesh_conv.meshing import mesh
 from Fields.Fields import Field
-from Fields.Fields import ZeroScalarField
+from Fields.Fields import ICScalarField
+from Fields.Fields import ScalarField
 from Fields.Fields import VectorField
 import matplotlib.pyplot as plt
 

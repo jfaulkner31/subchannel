@@ -1,63 +1,108 @@
 from gmesh_conv.meshing import mesh
-from Kernels.Kernels import Kernel
+from gmesh_conv.meshing import surface
 from Fields.Fields import ScalarField
+from Fields.Fields import Field
 import numpy as np
 
-class BoundaryCondition(Kernel):
-  TODO need to make it so that field can add bc and pass self to it. that way the BC can
-  TODO use field data in its calcs and then the field can use things like
-  TODO the appropriate face flux or face value in its gradient computations
-  TODO field will call things like setup coeffs
-  def __init__(self, m: mesh, boundary_name_list: list, field: ScalarField):
-    super().__init__(volumeList=field.volumeList, m=m)
-    self.boundary_name_list = boundary_name_list
+class BoundaryCondition:
+  def __init__(self, m: mesh, boundary_list: list, field: Field):
+    # stuff from kernel
+    self.eids = []
+    self.eid_to_n = {} # key is the eid and value is the index of the matrix
+    self.assign_elements(volumeList=field.volumeList) # makes eids list based on volumes
+    self.n = len(self.eids)
+    self.coeffs = np.zeros((self.n,self.n))
+    self.b = np.zeros(self.n) # b part of Ax = b -> fill all zeros
+    self.globalmesh = m
+
+    # stuff for bc objects
+    self.boundary_list = boundary_list # list of boundary ids
     self.field = field
     self.gradient_contribution = None
-    self.fid_to_n = {} # dict[face_id] -> returns value of n - the index of the matrix
+    self.fid_list = [] # list of face ids
+    self.fid_to_eid = {} # dict[face_id] -> returns element id
 
+    # assembly face and eid lists
+    self.assemble_face_id_list() # fills self.fid_list
 
+  def get_n(self, fid: int):
+    return self.eid_to_n[self.fid_to_eid[fid]]
 
   def assemble_face_id_list(self):
-    pass
+    for boundary_id in self.boundary_list:
+      boundary = self.globalmesh.boundaries[boundary_id]
+      for face_id in boundary.face_ids:
+        if face_id not in self.fid_list:
+          self.fid_list.append(face_id)
+    for fid in self.fid_list:
+      self.fid_to_eid[fid] = self.globalmesh.faces[fid].own_id
+
   def get_gradient_contribution(self):
-    pass
+    return None # will error when called unless overridden
+
   def setup_coeffs(self):
-    return super().setup_coeffs()
+    self.coeffs *= 0.0 # reset
+    self.b *= 0.0 # reset
+    self.get_diags()
+    self.get_off_diags()
+    self.get_b()
+
   def get_diags(self):
-    return super().get_diags()
+    pass
   def get_off_diags(self):
-    return super().get_off_diags()
+    pass
   def get_b(self):
-    return super().get_b()
+    pass
+
+  def assign_elements(self, volumeList):
+    idx = int(0)
+    for v in volumeList:
+      for eid in v.elements:
+        self.eids.append(eid)
+        self.eid_to_n[eid] = idx
+        idx += 1
+
+
+
 
 class DirichletBC(BoundaryCondition):
-  def __init__(self, boundary_name_list: list, m: mesh, Gamma: float, field: ScalarField, value: float):
-    super().__init__(boundary_name_list, m, field=field)
+  def __init__(self, boundary_list: list, m: mesh, Gamma: float, field: ScalarField, value: float):
+    super().__init__(boundary_list=boundary_list, m=m, field=field)
     self.Gamma = Gamma
     self.value = value
 
   def get_diags(self):
     # Gets and assigns diagonal coefficients
-    for idx, eid in enumerate(self.eids):
-      for fidx, this_gDiff in enumerate(self.gDiffs[eid]):
-        # automatically adds the boundary terms as well as internal face terms since these terms are contained in gDiff
-        if self.globalmesh.elements[eid].is_boundary[fidx]:
-          mat_idx = self.eid_to_n[eid]
-          self.coeffs[mat_idx, mat_idx] += self.Gamma * this_gDiff
+    # for _, fid in enumerate(self.fid_list):
+    #   eid = self.globalmesh.faces[fid].own_id
+    #   for fidx, this_gDiff in enumerate(self.globalmesh.gDiffs[eid]):
+    #     # automatically adds the boundary terms as well as internal face terms since these terms are contained in gDiff
+    #     if self.globalmesh.elements[eid].is_boundary[fidx]:
+    #       fid = self.globalmesh.elements[eid].face_ids[fidx]
+    #       mat_idx = self.get_n(fid)
+    #       self.coeffs[mat_idx, mat_idx] += self.Gamma * this_gDiff
+
+    for _, fid in enumerate(self.fid_list):
+      eid = self.fid_to_eid[fid]
+      fidx = self.globalmesh.elements[eid].face_ids.index(fid)
+      this_gDiff = self.globalmesh.gDiffs[eid][fidx]
+      mat_idx = self.get_n(fid)
+      self.coeffs[mat_idx, mat_idx] += self.Gamma * this_gDiff
 
   def get_off_diags(self):
     # does nothing
     pass
 
   def get_b(self):
-    for idx, eid in enumerate(self.eids):
-      for fidx, fid in enumerate(self.globalmesh.elements[eid].face_ids):
-        if self.globalmesh.elements[eid].is_boundary[fidx]:
+    for _, fid in enumerate(self.fid_list):
+      eid = self.globalmesh.faces[fid].own_id
+      for fidx, is_boundary in enumerate(self.globalmesh.elements[eid].is_boundary):
+        if is_boundary:
           grad_b = self.get_face_gradient(fid=fid, eid=eid)
           Tb = self.globalmesh.Tf[eid][fidx]
           gdiffB = self.globalmesh.gDiffs[eid][fidx]
           fluxVb = -self.Gamma * gdiffB * self.value - self.Gamma * np.dot(grad_b, Tb)
-          self.b -= fluxVb
+          self.b[self.get_n(fid)] -= fluxVb # subtracts fluxVb from b[n]
 
   def get_face_gradient(self, eid, fid):
     """
@@ -66,8 +111,8 @@ class DirichletBC(BoundaryCondition):
     # can reformulate the math sot hat this value is completely explicit
     """
     # get element geo weighting factor
-    face_index_C = self.global_mesh.elements[eid].face_ids.index(fid)
-    grad_b = ( self.value - self.field.get_value(eid) ) / self.globalmesh.elements[eid].d_Cf * self.globalmesh.elements[eid].evec[face_index_C]
+    face_index_C = self.globalmesh.elements[eid].face_ids.index(fid)
+    grad_b = ( self.value - self.field.get_value(eid) ) / self.globalmesh.elements[eid].d_Cf[face_index_C] * self.globalmesh.elements[eid].evec[face_index_C]
     return grad_b
 
   def get_gradient_contribution(self, face_id: int, eid: int):

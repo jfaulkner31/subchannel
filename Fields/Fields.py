@@ -1,40 +1,78 @@
 import numpy as np
 from gmesh_conv.meshing  import mesh
 
+
 class Field:
   def __init__(self, volumeList: list, m: mesh, name: str):
     self.volumeList = volumeList # a list of volume objects
     self.global_mesh = m
     self.name = name
+    self.bc_list = [] # list of BoundaryCondition derived objects
+    self.kernel_list = [] # list of kernels
+    self.T = None
+  def assign_bcs(self, bc_list: list):
+    # assigns BoundaryCondition  objcets to self.bc_list
+    # override this method later on in nearly all fields that use gradients.
+    for bc in bc_list:
+      self.bc_list.append(bc)
+  def assign_kernels(self, kernel_list: list):
+    for kernel in kernel_list:
+      self.kernel_list.append(kernel)
 
-class ZeroScalarField(Field):
-  def __init__(self, volumeList: list, m: mesh):
-    super().__init__(volumeList=volumeList, m=m, name='defaultZeroField')
+
+class ICScalarField(Field):
+  def __init__(self, volumeList: list, m: mesh, fill_value: float, ic_T={}, name='defaultField'):
+    super().__init__(volumeList=volumeList, m=m, name=name)
+    self.fill_value = fill_value
+    self.ic_T = ic_T
     self.T, self.eids = self.assign_values()
     self.n = len(self.T) # size of field
 
+
   def assign_values(self):
-    _T = {}
-    eids = []
-    for v in self.volumeList:
-      for eid in v.elements:
-        _T[eid] = 0.0
-        eids.append(eid)
+    # fill with predetermined float
+    if len(self.ic_T) == 0:
+      _T = {}
+      eids = []
+      for v in self.volumeList:
+        for eid in v.elements:
+          _T[eid] = self.fill_value
+          eids.append(eid)
+    # fill with a field
+    else:
+      _T = {}
+      eids = []
+      for v in self.volumeList:
+        for eid in v.elements:
+          _T[eid] = self.ic_T[eid]
+          eids.append(eid)
     return _T, eids
 
 class ScalarField(Field):
-  def __init__(self, initial_condition: Field, name: str, bc_list: list, gradientTolerance=1e-6):
+  def __init__(self, initial_condition: Field, name: str, gradientTolerance=1e-6):
     """
     volumeList: List of volume objects that this ScalarField lives on.
     """
     super().__init__(volumeList=initial_condition.volumeList, m=initial_condition.global_mesh, name=name)
+    self.gradientTolerance = gradientTolerance
     self.T = self.set_initial_condition(ic=initial_condition)
     self.eids = initial_condition.eids # copies element ids of the initial conditions
-    self.bc_list = bc_list # list of BoundaryCondition Objects for this field
+    # here we call boundary conditions and pass in self.
+
 
     # this field but on faces
     self.faceField = FaceScalarField(m=self.global_mesh, volumeList=self.volumeList, name=self.name+'_face')
-    self.grad = FVGradient(m=self.global_mesh, volumeList=self.volumeList, field=self, tolerance=gradientTolerance)
+    self.grad = None # gradient made in self.assign_bcs def
+
+  def assign_bcs(self, bc_list):
+    # first assign all bcs
+    for bc in bc_list:
+      self.bc_list.append(bc)
+    # now make gradient
+    self.grad = FVGradient(m=self.global_mesh, volumeList=self.volumeList, field=self, tolerance=self.gradientTolerance, bc_list = self.bc_list)
+
+  def assign_kernels(self, kernel_list):
+    return super().assign_kernels(kernel_list)
 
   def set_initial_condition(self, ic: Field):
     # we use the function to set the IC so that code creates a new copy -- self.T = ic.T would just pass a reference
@@ -50,6 +88,23 @@ class VectorField(Field):
   def __init__(self, volumeList: list, m: mesh, name: str):
     super().__init__(volumeList=volumeList, m=m, name=name)
     self.T, self.eids = self.set_zero()
+
+  def decompose_into_parts(self):
+    """
+    Splits the 3D vector into three scalar fields and returns them as a list.
+    """
+    fX = {}
+    fY = {}
+    fZ = {}
+    for key in self.T.keys():
+      fX[key] = self.T[key][0]
+      fY[key] = self.T[key][1]
+      fZ[key] = self.T[key][2]
+    fX = ICScalarField(volumeList=self.volumeList, m=self.global_mesh, fill_value=-1, ic_T = fX, name=self.name+'_X')
+    fY = ICScalarField(volumeList=self.volumeList, m=self.global_mesh, fill_value=-1, ic_T = fY, name=self.name+'_Y')
+    fZ = ICScalarField(volumeList=self.volumeList, m=self.global_mesh, fill_value=-1, ic_T = fZ, name=self.name+'_Z')
+    return [fX, fY, fZ]
+
   def set_zero(self):
     _T = {}
     eids = []
@@ -66,11 +121,19 @@ class VectorField(Field):
   def get_value(self, eid):
     return self.T[eid]
 
+  def assign_bcs(self, bc_list):
+    return super().assign_bcs(bc_list)
+
+  def assign_kernels(self, kernel_list):
+    return super().assign_kernels(kernel_list)
+
 class FVGradient:
   """
   Class to hold gradients for a FV object.
+  Needs BoundaryCondition object since computing gradient will require information of the BC's
   """
-  def __init__(self, m: mesh, volumeList: list, field: ScalarField, tolerance=1e-6):
+  def __init__(self, m: mesh, volumeList: list, field: ScalarField, bc_list: list, tolerance=1e-6):
+    self.bc_list = bc_list
     self.tolerance = tolerance
     self.volumeList = volumeList
     self.eids = []
@@ -78,9 +141,29 @@ class FVGradient:
     self.assign_elements() # fills up self.eids with element ids
     self.global_mesh = m
     self.gradient = VectorField(volumeList=self.volumeList, m=self.global_mesh, name=field.name+'_FVGradient')
+    self.face_to_bc_idx = {} # key = face_id; value = bc_idx in bc_list
+    self.get_bc_idxs() # fills face_to_bc_idx dictionary. -> now can do face as an index and get the bc out of it
 
     # initialize gradient
     self.updateGradient()
+
+  def return_grad(self):
+    return self.gradient.decompose_into_parts()
+
+
+  def get_bc_idxs(self):
+    for eid in self.eids:
+      for fidx, is_boundary in enumerate(self.global_mesh.elements[eid].is_boundary):
+        if is_boundary:
+          # get face id
+          face_id = self.global_mesh.elements[eid].face_ids[fidx]
+
+          # check if face id in any of the boundaries in bc_list
+          for bc_idx, bc in enumerate(self.bc_list):
+            if face_id in bc.fid_list:
+              self.face_to_bc_idx[face_id] = bc_idx
+          if face_id not in self.face_to_bc_idx:
+            raise Exception("Face id "+str(face_id)+" not in boundary conditions!")
 
   def get_face_gradient(self, eid: int, fid: int):
     """
@@ -143,9 +226,12 @@ class FVGradient:
 
           # Step 2. Add to grad_c
           grad_c += sv * phi_fp
-        else:
-          # if it is a boundary face
-          grad_c += TODO
+        else: # if it is a boundary face
+          # get bc idx in self.bc_list
+          bc_idx = self.face_to_bc_idx[face_id]
+          this_bc_object = self.bc_list[bc_idx]
+          grad_c += this_bc_object.get_gradient_contribution(face_id=face_id, eid=eid)
+
       # divide by volume to get grad_C
       grad_c = grad_c / self.global_mesh.elements[eid].volume
 
@@ -153,7 +239,9 @@ class FVGradient:
       self.gradient.set_value(eid=eid, vec=grad_c)
 
     keep_going = True
-    while keep_going:
+    total_its = 0
+    while keep_going & (total_its < 2):
+      total_its += 1
       keep_going = False
       # Gradient calc part 3 and 4
       for _, eid in enumerate(self.eids):
@@ -178,8 +266,10 @@ class FVGradient:
             sv = self.global_mesh.faces[face_id].surface_vector
             grad_c += sv * phi_f
           else:
-            # TODO add boundary gradients here
-            grad_c += 0.0
+            # get bc idx in self.bc_list
+            bc_idx = self.face_to_bc_idx[face_id]
+            this_bc_object = self.bc_list[bc_idx]
+            grad_c += this_bc_object.get_gradient_contribution(face_id=face_id, eid=eid)
 
         # divide by volume
         grad_c = grad_c / self.global_mesh.elements[eid].volume
@@ -226,4 +316,6 @@ class FaceScalarField(FaceField):
 
   def assign_value(self, val: float, fid: int):
     self.T[fid] = val
+
+
 

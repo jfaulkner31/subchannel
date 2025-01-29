@@ -279,7 +279,7 @@ class FVGradient:
             sv = self.global_mesh.faces[face_id].surface_vector
             grad_c += sv * phi_f * multiplier
           else:
-            # get bc idx in self.bc_list
+            # get bc idx in self.bc_list, then call the bc to return its contrib. to gradient.
             bc_idx = self.face_to_bc_idx[face_id]
             this_bc_object = self.bc_list[bc_idx]
             grad_c += this_bc_object.get_gradient_contribution(face_id=face_id, eid=eid)

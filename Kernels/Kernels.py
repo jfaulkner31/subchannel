@@ -15,7 +15,6 @@ class Kernel:
     self.eid_to_n = {} # key is the eid and value is the index of the matrix
     self.assign_elements(volumeList=volumeList) # makes eids list based on volumes
     self.n = len(self.eids)
-    # TODO need to make a dict where key is the element id and the value is the index in the mesh
     self.coeffs = np.zeros((self.n,self.n))
     self.b = np.zeros(self.n) # b part of Ax = b -> fill all zeros
     self.globalmesh = m

@@ -88,21 +88,21 @@ class DirichletBC(BoundaryCondition):
       this_gDiff = self.globalmesh.gDiffs[eid][fidx]
       mat_idx = self.get_n(fid)
       self.coeffs[mat_idx, mat_idx] += self.Gamma * this_gDiff
-
+      if eid == 4524:
+        pass
   def get_off_diags(self):
     # does nothing
     pass
 
   def get_b(self):
     for _, fid in enumerate(self.fid_list):
-      eid = self.globalmesh.faces[fid].own_id
-      for fidx, is_boundary in enumerate(self.globalmesh.elements[eid].is_boundary):
-        if is_boundary:
-          grad_b = self.get_face_gradient(fid=fid, eid=eid)
-          Tb = self.globalmesh.Tf[eid][fidx]
-          gdiffB = self.globalmesh.gDiffs[eid][fidx]
-          fluxVb = -self.Gamma * gdiffB * self.value - self.Gamma * np.dot(grad_b, Tb)
-          self.b[self.get_n(fid)] -= fluxVb # subtracts fluxVb from b[n]
+      eid = self.fid_to_eid[fid]
+      fidx = self.globalmesh.elements[eid].face_ids.index(fid)
+      grad_b = self.get_face_gradient(fid=fid, eid=eid)
+      Tb = self.globalmesh.Tf[eid][fidx]
+      gdiffB = self.globalmesh.gDiffs[eid][fidx]
+      fluxVb = -self.Gamma * gdiffB * self.value - self.Gamma * np.dot(grad_b, Tb)
+      self.b[self.get_n(fid)] -= fluxVb # subtracts fluxVb from b[n]
 
   def get_face_gradient(self, eid, fid):
     """
@@ -113,12 +113,14 @@ class DirichletBC(BoundaryCondition):
     # get element geo weighting factor
     face_index_C = self.globalmesh.elements[eid].face_ids.index(fid)
     grad_b = ( self.value - self.field.get_value(eid) ) / self.globalmesh.elements[eid].d_Cf[face_index_C] * self.globalmesh.elements[eid].evec[face_index_C]
-    return self.field.grad.gradient.get_value(eid)  # used to be grad_b but idk
+    return grad_b
+    # return self.field.grad.gradient.get_value(eid)  # used to be grad_b but idk TODO check maybe?
+
+    # TODO uFVM has return gradient of owner cell but i think that return grad_b is correct? idk
+    # review uFVM implementation.
 
   def get_gradient_contribution(self, face_id: int, eid: int):
     # gets gradient contribution for this BC - e.g. phi_f * Surface_vector
-
-    # get whether it is owner or not
 
     return self.value * self.globalmesh.faces[face_id].surface_vector
 

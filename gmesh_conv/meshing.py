@@ -238,7 +238,8 @@ class mesh():
           if e.is_face[idx]: # for faces
             this_gDiff.append( np.linalg.norm(_ef) / e.d_CNb[idx])
           elif e.is_boundary[idx]: # for boundaries
-            this_gDiff.append(  np.linalg.norm(_ef) / e.d_Cf[idx] )
+            # for bndries _ef = _Sf
+            this_gDiff.append(  np.linalg.norm(Sf) / e.d_Cf[idx] )
           else:
             raise Exception("Neither a face or boundary, huh????")
 
@@ -788,8 +789,6 @@ def mesh_from_gmsh(filename: str, orthogonalityApproach: str):
     if any(this_surface_vector == None):
       raise Exception("surface vector for face_id="+str(f.face_id)+" was never assigned")
 
-    if f.face_id == 9214:
-      aasdasdasdsad = 1
     this_centroid = f.centroid
     owner_centroid = elements[f.own_id].centroid
 

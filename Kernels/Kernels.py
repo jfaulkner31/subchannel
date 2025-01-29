@@ -69,10 +69,9 @@ class Kernel:
     plt.show()
 
 class DiffusionKernel(Kernel):
-  def __init__(self, field: ScalarField, volumeList: list, Gamma: float, orthogonalityApproach: str, m: mesh):
+  def __init__(self, field: ScalarField, volumeList: list, Gamma: float, m: mesh):
     super().__init__(volumeList=volumeList, m=m)
     self.Gamma = self.set_gamma(Gamma)
-    self.orthogonalityApproach = orthogonalityApproach
     self.field = field
 
     # geometric diffusion coefficients for neighbors and boundaries.

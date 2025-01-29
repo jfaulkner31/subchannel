@@ -113,7 +113,7 @@ class DirichletBC(BoundaryCondition):
     # get element geo weighting factor
     face_index_C = self.globalmesh.elements[eid].face_ids.index(fid)
     grad_b = ( self.value - self.field.get_value(eid) ) / self.globalmesh.elements[eid].d_Cf[face_index_C] * self.globalmesh.elements[eid].evec[face_index_C]
-    return grad_b
+    return self.field.grad.gradient.get_value(eid)  # used to be grad_b but idk
 
   def get_gradient_contribution(self, face_id: int, eid: int):
     # gets gradient contribution for this BC - e.g. phi_f * Surface_vector

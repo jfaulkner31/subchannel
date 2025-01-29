@@ -247,7 +247,7 @@ class FVGradient:
     keep_going = True
     total_its = 0
 
-    while keep_going & (total_its < 4):
+    while keep_going & (total_its < 2):
       grad_previ_it = deepcopy(self.gradient)
       total_its += 1
       keep_going = False

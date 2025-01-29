@@ -103,8 +103,10 @@ class element():
 
   def assign_neighbor_info(self, nodeTags: list, neighbor_id: int, face_id: int):
     for idx, this_node_tags in enumerate(self.surfaceNodeTags):
-      sorted_this_node_tags = sorted(this_node_tags)
-      sorted_input_node_tags = sorted(nodeTags)
+      if self.eid == 23035:
+        continue
+      sorted_this_node_tags = sorted(this_node_tags) # current element node tags
+      sorted_input_node_tags = sorted(nodeTags) # neighbor node tags
       if sorted_this_node_tags == sorted_input_node_tags: # this is the correct surface.
         self.is_face[idx] = True
         self.face_ids[idx] = face_id
@@ -577,6 +579,15 @@ def mesh_from_gmsh(filename: str, orthogonalityApproach: str):
 
   # # internal_face_map has tuples that are the keys to the dict where tuples are the nodeTags that make up the surface.
   # internal_face_map values are [parent, neighbor] for the face.
+
+  ################################
+  # Now check internal face map length
+  ################################
+  for key in internal_face_map.keys():
+    if len(internal_face_map[key]) > 2:
+      # internal face map[key] should be at most 2 long since owner neighbor pairs and all that.
+      raise Exception("If this is thrown this means that a face has more than 2 owner neighbors. Should be [owner, neighbor] but it is instead [entry1, entry2, entry3, ....]")
+
 
   ################################
   # making faces for pairs

@@ -1,4 +1,5 @@
 from Fields.Fields import Field
+from Fields.Fields import ICScalarField
 from BCs.BoundaryConditions import BoundaryCondition
 from Kernels.Kernels import Kernel
 import scipy
@@ -14,6 +15,24 @@ class SinglePhysicsSolver:
     self.b = self.field.kernel_list[0].b * 0.0 # initialize to 0.0
     self.T = self.field.T
     self.iterations = iterations
+
+  def b_to_field(self):
+    eid_to_n = self.field.kernel_list[0].eid_to_n
+    n_to_eid = {}
+    for eid in eid_to_n.keys():
+      n = eid_to_n[eid]
+      n_to_eid[n] = eid
+
+    this_b = {}
+    for _, nkey in enumerate(n_to_eid.keys()):
+      eid = n_to_eid[nkey]
+      n = nkey
+      this_b[eid] = self.b[n]
+    field = ICScalarField(m=self.field.global_mesh, name='bvec_'+self.field.name, volumeList=self.field.volumeList, fill_value=-1, ic_T = this_b)
+    return field
+
+
+
   def solve(self):
     for it in range(self.iterations):
       print("SinglePhysicsSolver Field", self.field.name, " ~ Iteration", it)

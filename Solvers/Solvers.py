@@ -56,11 +56,13 @@ class SinglePhysicsSolver:
 
       # # try to set gradient term up if it exists
       try:
+        print("\tUpdating gradient...")
         self.field.grad.updateGradient()
       except:
         print("Not updating gradient for variable", self.field.name, " - .updateGradient() does not exist.")
 
       # do boundary condition terms
+      print("\tWriting coefficients...")
       for bc in self.field.bc_list:
         bc.setup_coeffs()
         self.coeffs += bc.coeffs
@@ -73,6 +75,7 @@ class SinglePhysicsSolver:
         self.b += kernel.b
 
       # # Now solve
+      print("\tSolving...")
       soln = scipySolve(self.coeffs, self.b)
 
       # # Fill dict with soln.

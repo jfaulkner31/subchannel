@@ -103,8 +103,7 @@ class element():
 
   def assign_neighbor_info(self, nodeTags: list, neighbor_id: int, face_id: int):
     for idx, this_node_tags in enumerate(self.surfaceNodeTags):
-      if self.eid == 23035:
-        continue
+
       sorted_this_node_tags = sorted(this_node_tags) # current element node tags
       sorted_input_node_tags = sorted(nodeTags) # neighbor node tags
       if sorted_this_node_tags == sorted_input_node_tags: # this is the correct surface.
@@ -304,6 +303,8 @@ class mesh():
           vtk_file.write(f"10\n")
         elif cell.ele_type == 7: # gmesh 5 node pyramid -> vtk type 14
           vtk_file.write(f"14\n")
+        elif cell.ele_type == 5: # gmesh 5 node pyramid -> vtk type 14
+          vtk_file.write(f"12\n")
 
       # cell data and field data now
       # ----------------------------
@@ -495,6 +496,7 @@ def mesh_from_gmsh(filename: str, orthogonalityApproach: str):
   # element type 2 = 3 node triangle (useless)
   # element type 3 = 4 node quadrangle (2d aka garbage)
   # element type 4 = 4 node tetrahedon (3d keep)
+  # element type 5 = 8 node hexahedral
   # element type 7 = 5 node pyramid (3d keep)
   elements = []
   element_id = 0
@@ -526,6 +528,38 @@ def mesh_from_gmsh(filename: str, orthogonalityApproach: str):
 
           elements += [element(nodes=[n0, n1, n2, n3], ele_type=4, desc='4n_tet', eid=element_id, sn=sn, entity_tag_dim=ent_tag_dim, etag=et[int((nt_idx+1)/numNodes)])]
           element_id += 1
+
+    elif t == 5: # 8 node hexa
+      numNodes = 8
+      for nt_idx, this_node_tag in enumerate(nt):
+        if nt_idx % numNodes == 0:
+          # get node indexes for this element
+          n0 = nt[nt_idx]
+          n1 = nt[nt_idx+1]
+          n2 = nt[nt_idx+2]
+          n3 = nt[nt_idx+3]
+          n4 = nt[nt_idx+4]
+          n5 = nt[nt_idx+5]
+          n6 = nt[nt_idx+5]
+          n7 = nt[nt_idx+5]
+
+          sn0 = [1,2,6,5]
+          sn1 = [0,3,4,7]
+          sn2 = [0,1,4,5]
+          sn3 = [0,1,2,3]
+          sn4 = [2,3,6,7]
+          sn5 = [0,1,4,5]
+          sn = [sn0, sn1, sn2, sn3, sn4, sn5]
+
+          # get some specific element data
+          _, _, entity_dim, entity_tag = gmsh.model.mesh.getElement(et[int((nt_idx+1)/numNodes)]) # tag and dim of the entity this element appears on
+          ent_tag_dim = (entity_tag, entity_dim)
+
+          elements += [element(nodes=[n0, n1, n2, n3, n4, n5,n6,n7], ele_type=5, desc='8n_hex', eid=element_id, sn=sn, entity_tag_dim=ent_tag_dim, etag=et[int((nt_idx+1)/numNodes)])]
+          element_id += 1
+
+
+
 
     elif t == 7: # 5 node pyramid
       numNodes = 5
@@ -569,6 +603,8 @@ def mesh_from_gmsh(filename: str, orthogonalityApproach: str):
   sorted_to_unsorted_dict = {} # key is sorted node tags and value is the unsorted ones
   for idx, e in enumerate(elements):
     for idx_this_elements_surf, surface_i in enumerate(e.surfaceNodeTags):
+      if e.eid == 23035:
+        pass
       if (e.is_boundary[idx_this_elements_surf] == False):
         surface_key = tuple(sorted(surface_i))
         unsorted_key = tuple(surface_i)
@@ -586,7 +622,9 @@ def mesh_from_gmsh(filename: str, orthogonalityApproach: str):
   for key in internal_face_map.keys():
     if len(internal_face_map[key]) > 2:
       # internal face map[key] should be at most 2 long since owner neighbor pairs and all that.
-      raise Exception("If this is thrown this means that a face has more than 2 owner neighbors. Should be [owner, neighbor] but it is instead [entry1, entry2, entry3, ....]")
+      print("internal_face_map[key] =", internal_face_map[key])
+      raise Exception("If this is thrown this means that a face has more than 2 owner neighbors." +
+                      "Should be [owner, neighbor] but it is instead [entry1, entry2, entry3, ....]")
 
 
   ################################
